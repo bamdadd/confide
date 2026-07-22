@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use confide, please cite it."
+title: "confide: a domain-specialized privacy / contextual-integrity leakage benchmark"
+authors:
+  - family-names: Dashtban
+    given-names: Bamdad
+version: 0.0.1
+license: MIT
+repository-code: "https://github.com/bamdadd/confide"
+abstract: >-
+  confide is a synthetic-by-design benchmark that measures whether a domain
+  agent (health, fintech) discloses a forbidden PII attribute to a forbidden
+  recipient given the task context. Scoring is deterministic and verified — no
+  language model in the scoring path — over a unified taxonomy covering the HIPAA
+  Safe-Harbor 18 identifiers and core financial PII.
