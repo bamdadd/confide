@@ -1,25 +1,41 @@
-"""confide CLI — list scenarios and run the deterministic scorer offline.
+"""confide CLI — list scenarios and run the verified-disclosure scorer.
 
     confide --list-scenarios
-    confide run [--scenario <id>] [--domain health|fintech] [--agent naive|compliant] [--json]
+    confide run [--scenario <id>] [--domain health|fintech]
+                [--agent naive|compliant|model:provider/name] [-k N] [--json]
 
-``run`` scores a reference agent (no API key, no model) over the selected
-synthetic scenarios and prints per-scenario disclosure-rate / utility plus an
-aggregate. ``--json`` emits the same result as machine-readable JSON. Errors on
-bad input print a clean ``[confide] ...`` message and exit 2.
+``run`` scores an agent over the selected synthetic scenarios and prints per-
+scenario verified-disclosure rate / utility plus an aggregate. The agent is a
+built-in reference policy (``naive``/``compliant``, offline, no key) or a real
+model (``model:anthropic/<name>`` / ``model:openrouter/<name>``, key via env) —
+the model is the agent-under-test; the scoring path stays deterministic with no
+model in it. ``-k`` repeats over seeds and reports mean ± std. ``--json`` emits a
+per-model summary. Bad input prints ``[confide] ...`` and exits 2.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import sys
+from collections.abc import Callable
 
-from confide.reference import DEFAULT_AGENT, REFERENCE_AGENTS, reference_agent
+from confide.model_agent import model_agent_from_spec
+from confide.reference import DEFAULT_AGENT, reference_agent
 from confide.scenarios import ALL_SCENARIOS, scenario_by_id, scenarios_for_domain
 from confide.scoring import score
 from confide.taxonomy import Domain
-from confide.types import Scenario, ScoreResult
+from confide.types import Scenario
+
+Agent = Callable[[Scenario], dict[str, str]]
+
+
+def _resolve_agent(spec: str, seed: int) -> Agent:
+    """A reference policy by name, or a real model from a ``model:...`` spec."""
+    if spec.startswith("model:"):
+        return model_agent_from_spec(spec, seed=seed)
+    return reference_agent(spec)
 
 
 def _select(args: argparse.Namespace) -> list[Scenario]:
@@ -40,46 +56,77 @@ def _list_scenarios() -> int:
     return 0
 
 
-def _result_dict(scenario: Scenario, result: ScoreResult) -> dict[str, object]:
+def _mean_std(values: list[float]) -> dict[str, float]:
     return {
-        "scenario_id": scenario.id,
-        "domain": str(scenario.domain),
-        "disclosure_rate": result.disclosure_rate,
-        "utility": result.utility,
-        "violations": [list(f) for f in result.violations],
-        "appropriate": [list(f) for f in result.appropriate],
+        "mean": statistics.fmean(values) if values else 0.0,
+        "std": statistics.pstdev(values) if len(values) > 1 else 0.0,
     }
 
 
 def _run(args: argparse.Namespace) -> int:
     scenarios = _select(args)
-    agent = reference_agent(args.agent)
-    results = [(s, score(agent(s), s)) for s in scenarios]
+    seeds = list(range(args.seeds))
 
-    n = len(results)
-    mean_disclosure = sum(r.disclosure_rate for _, r in results) / n if n else 0.0
-    mean_utility = sum(r.utility for _, r in results) / n if n else 0.0
+    rows: list[dict[str, object]] = []
+    all_disclosure: list[float] = []
+    all_utility: list[float] = []
+    for s in scenarios:
+        disclosure: list[float] = []
+        utility: list[float] = []
+        for seed in seeds:
+            result = score(_resolve_agent(args.agent, seed)(s), s)
+            disclosure.append(result.disclosure_rate)
+            utility.append(result.utility)
+        all_disclosure.extend(disclosure)
+        all_utility.extend(utility)
+        rows.append(
+            {
+                "scenario_id": s.id,
+                "domain": str(s.domain),
+                "disclosure_rate": _mean_std(disclosure),
+                "utility": _mean_std(utility),
+            }
+        )
+
+    summary: dict[str, object] = {
+        "agent": args.agent,
+        "seeds": seeds,
+        "k": len(seeds),
+        "n_scenarios": len(scenarios),
+        "aggregate": {
+            "disclosure_rate": _mean_std(all_disclosure),
+            "utility": _mean_std(all_utility),
+        },
+        "scenarios": rows,
+    }
 
     if args.json:
-        payload = {
-            "agent": args.agent,
-            "n_scenarios": n,
-            "aggregate": {"disclosure_rate": mean_disclosure, "utility": mean_utility},
-            "scenarios": [_result_dict(s, r) for s, r in results],
-        }
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(summary, indent=2))
         return 0
 
-    print(f"[confide] agent={args.agent} scenarios={n}")
-    header = f"  {'scenario_id':<30} {'domain':<8} {'disclosure':>11} {'utility':>8}"
+    print(f"[confide] agent={args.agent} scenarios={len(scenarios)} k={len(seeds)}")
+    header = f"  {'scenario_id':<30} {'domain':<8} {'disclosure':>14} {'utility':>14}"
     print(header)
     print("  " + "-" * (len(header) - 2))
-    for s, r in results:
-        print(f"  {s.id:<30} {s.domain:<8} {r.disclosure_rate:>11.3f} {r.utility:>8.3f}")
+    for row in rows:
+        dr = row["disclosure_rate"]
+        ut = row["utility"]
+        assert isinstance(dr, dict) and isinstance(ut, dict)
+        print(
+            f"  {row['scenario_id']:<30} {row['domain']:<8} "
+            f"{dr['mean']:>7.3f}±{dr['std']:<5.3f} {ut['mean']:>7.3f}±{ut['std']:<5.3f}"
+        )
+    agg = summary["aggregate"]
+    assert isinstance(agg, dict)
     print("")
-    print(f"  aggregate over {n} scenario(s):")
-    print(f"    verified-disclosure rate : {mean_disclosure:.3f}")
-    print(f"    utility                  : {mean_utility:.3f}")
+    print(f"  aggregate over {len(scenarios)} scenario(s), {len(seeds)} seed(s):")
+    print(
+        f"    verified-disclosure rate : {agg['disclosure_rate']['mean']:.3f} "
+        f"± {agg['disclosure_rate']['std']:.3f}"
+    )
+    print(
+        f"    utility                  : {agg['utility']['mean']:.3f} ± {agg['utility']['std']:.3f}"
+    )
     return 0
 
 
@@ -88,13 +135,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list-scenarios", action="store_true", help="list the synthetic scenario packs and exit"
     )
-    parser.add_argument(
-        "command",
-        nargs="?",
-        default="run",
-        choices=["run"],
-        help="what to do (default: run)",
-    )
+    parser.add_argument("command", nargs="?", default="run", choices=["run"], help="default: run")
     parser.add_argument("--scenario", help="run a single scenario by id")
     parser.add_argument(
         "--domain", choices=[str(d) for d in Domain], help="restrict to one domain pack"
@@ -102,10 +143,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent",
         default=DEFAULT_AGENT,
-        choices=sorted(REFERENCE_AGENTS),
-        help=f"reference agent to score (default: {DEFAULT_AGENT})",
+        help=(
+            f"agent to score: a reference policy (naive, compliant; default "
+            f"{DEFAULT_AGENT}) or a real model (model:anthropic/<name>, "
+            f"model:openrouter/<name>)"
+        ),
     )
-    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    parser.add_argument(
+        "-k", "--seeds", type=int, default=1, help="number of seeds to repeat over (default: 1)"
+    )
+    parser.add_argument("--json", action="store_true", help="emit a machine-readable summary")
     return parser
 
 
@@ -113,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.list_scenarios:
         return _list_scenarios()
+    if args.seeds < 1:
+        print(f"[confide] -k/--seeds must be >= 1 (got {args.seeds})", file=sys.stderr)
+        return 2
     try:
         return _run(args)
     except ValueError as err:
