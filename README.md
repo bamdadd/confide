@@ -69,6 +69,17 @@ uv run confide run --agent model:openrouter/meta-llama/llama-3.1-8b-instruct -k 
 summary suitable for the leaderboard report. Supported providers: `anthropic`
 (key `ANTHROPIC_API_KEY`) and `openrouter` (key `OPENROUTER_API_KEY`).
 
+### Leaderboard
+
+Rank saved per-model summaries by verified-disclosure rate (worst first), with
+utility alongside:
+
+```bash
+uv run confide run --agent model:anthropic/claude-haiku-4-5 -k 3 --json > haiku.json
+uv run confide run --agent model:openrouter/qwen/qwen-2.5-7b-instruct -k 3 --json > qwen.json
+uv run confide report haiku.json qwen.json          # or --json
+```
+
 `confide` is both a **library** (import the types and scorer to evaluate your own
 agent) and a **research artifact** (a measured finding about domain
 verified-disclosure rates — see docs).
