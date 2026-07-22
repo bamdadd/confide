@@ -26,7 +26,7 @@ def test_run_json_is_machine_readable(capsys: pytest.CaptureFixture[str]) -> Non
     assert main(["run", "--domain", "fintech", "--agent", "compliant", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["agent"] == "compliant"
-    assert payload["aggregate"]["disclosure_rate"] == 0.0
+    assert payload["aggregate"]["disclosure_rate"]["mean"] == 0.0
     assert {s["scenario_id"] for s in payload["scenarios"]} == {
         "fintech-loan-underwriting",
         "fintech-support-dispute",
@@ -37,7 +37,7 @@ def test_run_single_scenario(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["run", "--scenario", "health-discharge-handoff", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["n_scenarios"] == 1
-    assert payload["scenarios"][0]["disclosure_rate"] == 1.0  # naive default
+    assert payload["scenarios"][0]["disclosure_rate"]["mean"] == 1.0  # naive default
 
 
 def test_unknown_scenario_errors_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
