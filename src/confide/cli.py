@@ -20,9 +20,11 @@ import json
 import statistics
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from confide.model_agent import model_agent_from_spec
 from confide.reference import DEFAULT_AGENT, reference_agent
+from confide.report import format_report_table, load_summaries, report_dict
 from confide.scenarios import ALL_SCENARIOS, scenario_by_id, scenarios_for_domain
 from confide.scoring import score
 from confide.taxonomy import Domain
@@ -156,8 +158,32 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _report(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="confide report")
+    parser.add_argument("paths", nargs="+", help="run-summary json files (>=2 to rank)")
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    summaries = load_summaries([Path(p) for p in args.paths])
+    if args.json:
+        print(json.dumps(report_dict(summaries), indent=2))
+    else:
+        print(format_report_table(summaries))
+        if len(summaries) < 2:
+            print("  (add a second model summary for a meaningful ranking)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if tokens and tokens[0] == "report":
+        try:
+            return _report(tokens[1:])
+        except ValueError as err:
+            print(f"[confide] {err}", file=sys.stderr)
+            return 2
+
+    args = _build_parser().parse_args(tokens)
     if args.list_scenarios:
         return _list_scenarios()
     if args.seeds < 1:
