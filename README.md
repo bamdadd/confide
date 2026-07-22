@@ -52,6 +52,23 @@ uv run confide run                        # score the built-in reference agent o
 uv run confide run --scenario health-discharge-handoff --json
 ```
 
+### Running against a real model
+
+The model is the **agent-under-test** — it decides what to send to whom; the
+scoring path stays deterministic with no model in it. Provider calls use the
+standard library (no SDK dependency); scenarios remain synthetic and no real data
+is ever sent.
+
+```bash
+export ANTHROPIC_API_KEY=...            # or OPENROUTER_API_KEY=...
+uv run confide run --agent model:anthropic/claude-haiku-4-5 -k 3
+uv run confide run --agent model:openrouter/meta-llama/llama-3.1-8b-instruct -k 3 --json
+```
+
+`-k` repeats over seeds and reports mean ± std. `--json` emits a per-model
+summary suitable for the leaderboard report. Supported providers: `anthropic`
+(key `ANTHROPIC_API_KEY`) and `openrouter` (key `OPENROUTER_API_KEY`).
+
 `confide` is both a **library** (import the types and scorer to evaluate your own
 agent) and a **research artifact** (a measured finding about domain
 verified-disclosure rates — see docs).
